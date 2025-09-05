@@ -347,3 +347,262 @@ axs[2].set_title("Estacionalidad (Patrón mensual)")
 
 plt.tight_layout()
 plt.show()
+
+#PARTE 4 PREDICCIÓN CON GRADIENT DESCENT
+
+top5_fabs = df_candy_fab_top.head(5)['FAB'].tolist()
+print("Top 5 fabricantes:", top5_fabs)
+
+df_model_data = df_candy_perf_top[df_candy_perf_top['FAB'].isin(top5_fabs)].copy()
+
+
+#Función de hipótesis
+def hyp(x, theta, b):
+    y_hat = b
+    for i in range(len(x)):
+        y_hat += x[i] * theta[i]
+    return y_hat
+
+#Función de costo
+def mse(x, theta, b, y):
+    cost = 0
+    m = len(x)
+    for i in range(m):
+        cost += (hyp(x[i], theta, b) - y[i])**2
+    return cost / m
+
+#Función de actualización
+def update(x, theta, b, y, alfa):
+    new_theta = theta.copy()
+    m = len(x)
+    n = len(theta)
+
+    # Actualizar theta
+    for j in range(n):
+        grad_theta = 0
+        for i in range(m):
+            grad_theta += (hyp(x[i], theta, b) - y[i]) * x[i][j]
+        new_theta[j] = theta[j] - (alfa/m) * grad_theta
+
+    # Actualizar b
+    grad_b = 0
+    for i in range(m):
+        grad_b += (hyp(x[i], theta, b) - y[i])
+    new_b = b - (alfa/m) * grad_b
+
+    return new_theta, new_b
+
+
+
+resultados_pronostico = {}
+
+for fab in top5_fabs:
+    
+    fab_data = df_model_data[df_model_data['FAB'] == fab].sort_values('ANIO')
+    
+    if len(fab_data) < 3:
+        print(f" Datos insuficientes para {fab}")
+        continue
+    
+    years = fab_data['ANIO'].values
+    years_norm = (years - years.min()) / (years.max() - years.min())  
+    
+    features_raw = []
+    for i, year in enumerate(years_norm):
+        features_raw.append([
+            year,                           # tendencia lineal
+            year**2,                        # tendencia cuadrática  
+            np.sin(2*np.pi*i/5),           # componente cíclico (5 años)
+            np.cos(2*np.pi*i/5)            # componente cíclico (5 años)
+        ])
+    
+
+    ventas_raw = fab_data['VALOR'].values
+    precios_raw = fab_data['PRECIO_PROM'].values
+    
+    x_raw = np.array(features_raw)
+    x_mean = np.mean(x_raw, axis=0)
+    x_std = np.std(x_raw, axis=0)
+    x_std[x_std == 0] = 1  
+    x = ((x_raw - x_mean) / x_std).tolist()
+    
+    #  VENTAS 
+    
+
+    y_mean_ventas = np.mean(ventas_raw)
+    y_std_ventas = np.std(ventas_raw)
+    y_ventas = ((ventas_raw - y_mean_ventas) / y_std_ventas).tolist()
+    
+
+    theta_ventas = [0.0] * len(x[0])
+    b_ventas = 0.0
+    alfa = 0.01
+    epoca = 2000  
+    errores_ventas = []
+    
+
+    i = 0
+    while i < epoca:
+        error_actual = mse(x, theta_ventas, b_ventas, y_ventas)
+        errores_ventas.append(error_actual)
+        
+        if error_actual == 0:
+            break
+        
+        theta_ventas, b_ventas = update(x, theta_ventas, b_ventas, y_ventas, alfa)
+        i += 1
+    
+    print(f"Error final ventas: {errores_ventas[-1]:.6f}")
+    
+    # PRECIOS
+
+    y_mean_precios = np.mean(precios_raw)
+    y_std_precios = np.std(precios_raw)
+    y_precios = ((precios_raw - y_mean_precios) / y_std_precios).tolist()
+    
+    theta_precios = [0.0] * len(x[0])
+    b_precios = 0.0
+    errores_precios = []
+    
+    i = 0
+    while i < epoca:
+        error_actual = mse(x, theta_precios, b_precios, y_precios)
+        errores_precios.append(error_actual)
+        
+        if error_actual == 0:
+            break
+        
+        theta_precios, b_precios = update(x, theta_precios, b_precios, y_precios, alfa)
+        i += 1
+    
+    print(f"Error final precios: {errores_precios[-1]:.6f}")
+    
+    #PRONÓSTICOS PARA 24 MESES
+    last_year = years.max()
+    future_years = np.arange(last_year + 1, last_year + 3)  # 2025, 2026
+    future_years_norm = (future_years - years.min()) / (years.max() - years.min())
+    
+    future_features_raw = []
+    for i, year in enumerate(future_years_norm):
+        future_features_raw.append([
+            year,
+            year**2,
+            np.sin(2*np.pi*(len(years)+i)/5),
+            np.cos(2*np.pi*(len(years)+i)/5)
+        ])
+    
+
+    x_future_raw = np.array(future_features_raw)
+    x_future = ((x_future_raw - x_mean) / x_std).tolist()
+    
+    
+    ventas_pred_norm = [hyp(xi, theta_ventas, b_ventas) for xi in x_future]
+    precios_pred_norm = [hyp(xi, theta_precios, b_precios) for xi in x_future]
+    
+    
+    ventas_pred = [yp * y_std_ventas + y_mean_ventas for yp in ventas_pred_norm]
+    precios_pred = [yp * y_std_precios + y_mean_precios for yp in precios_pred_norm]
+    
+    
+    ventas_pred = [max(v, 0) for v in ventas_pred]
+    precios_pred = [max(p, 0.1) for p in precios_pred]
+    
+    resultados_pronostico[fab] = {
+        'años_historicos': years,
+        'ventas_historicas': ventas_raw,
+        'precios_historicos': precios_raw,
+        'años_futuros': future_years,
+        'ventas_futuras': ventas_pred,
+        'precios_futuros': precios_pred,
+        'errores_ventas': errores_ventas,
+        'errores_precios': errores_precios
+    }
+    
+    print(f"Ventas 2025: ${ventas_pred[0]:,.0f}, Precios 2025: ${precios_pred[0]:.2f}")
+
+
+fig, axes = plt.subplots(len(resultados_pronostico), 2, figsize=(15, 4*len(resultados_pronostico)))
+if len(resultados_pronostico) == 1:
+    axes = axes.reshape(1, -1)
+
+for i, (fab, data) in enumerate(resultados_pronostico.items()):
+    
+    
+    ax1 = axes[i, 0] if len(resultados_pronostico) > 1 else axes[0]
+    
+    
+    ax1.plot(data['años_historicos'], data['ventas_historicas'], 
+             'o-', color='blue', linewidth=2, markersize=6, label='Histórico')
+    
+    
+    ax1.plot(data['años_futuros'], data['ventas_futuras'], 
+             's-', color='red', linewidth=2, markersize=6, label='Pronóstico', alpha=0.8)
+    
+    
+    ax1.axvline(x=2024.5, color='gray', linestyle='--', alpha=0.5)
+    
+    ax1.set_title(f'{fab} - Ventas (Gradiente Descendente)')
+    ax1.set_xlabel('Año')
+    ax1.set_ylabel('Ventas ($)')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.ticklabel_format(style='plain', axis='y')
+    
+    ax2 = axes[i, 1] if len(resultados_pronostico) > 1 else axes[1]
+    
+   
+    ax2.plot(data['años_historicos'], data['precios_historicos'], 
+             'o-', color='green', linewidth=2, markersize=6, label='Histórico')
+
+    ax2.plot(data['años_futuros'], data['precios_futuros'], 
+             's-', color='orange', linewidth=2, markersize=6, label='Pronóstico', alpha=0.8)
+    
+    ax2.axvline(x=2024.5, color='gray', linestyle='--', alpha=0.5)
+    
+    ax2.set_title(f'{fab} - Precios (Gradiente Descendente)')
+    ax2.set_xlabel('Año')
+    ax2.set_ylabel('Precio Promedio ($)')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+plt.suptitle('Pronósticos con Regresión Lineal y Gradiente Descendente', fontsize=16, fontweight='bold')
+plt.tight_layout()
+plt.show()
+
+
+# TABLA DE PRONÓSTICOS (24 MESES)
+
+
+print("\n" + "="*80)
+print("PRONÓSTICOS PARA LOS PRÓXIMOS 24 MESES (2025-2026)")
+print("="*80)
+
+tabla_pronosticos = []
+for fab, data in resultados_pronostico.items():
+    for i, año in enumerate(data['años_futuros']):
+        for mes in range(1, 13):
+            tabla_pronosticos.append({
+                'FAB': fab,
+                'Año': año,
+                'Mes': mes,
+                'Ventas_Anuales': data['ventas_futuras'][i] / data['precios_futuros'][i],  # Unidades = Ingresos / Precio
+                'Ventas_Mensuales': (data['ventas_futuras'][i] / data['precios_futuros'][i]) / 12,  # Unidades mensuales
+                'Precio_Promedio': data['precios_futuros'][i],
+                'Ingresos_Mensuales': data['ventas_futuras'][i] / 12  # Ingresos mensuales en dólares
+            })
+
+df_tabla_pronosticos = pd.DataFrame(tabla_pronosticos)
+
+
+print("RESUMEN POR FABRICANTE Y AÑO:")
+resumen_anual = df_tabla_pronosticos.groupby(['FAB', 'Año']).agg({
+    'Ventas_Anuales': 'first',
+    'Precio_Promedio': 'first',
+    'Ingresos_Mensuales': 'sum' 
+}).round(2)
+resumen_anual.rename(columns={'Ingresos_Mensuales': 'Ingresos_Anuales'}, inplace=True)
+
+
+pd.set_option('display.float_format', '{:.2f}'.format)
+print(resumen_anual)
+pd.reset_option('display.float_format')
