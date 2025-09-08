@@ -208,20 +208,41 @@ for FAB in FABS:
 
         t_stat = model.tvalues['ln_precio']
         p_value = model.pvalues['ln_precio']
-        conf_int = model.conf_int()
+        conf_int_low = conf_int.loc['ln_precio', 0]
+        conf_int_high = conf_int.loc['ln_precio', 1]
 
         resultados[FAB] = {
             'interseccion': interseccion,
             'coeficiente': elasticidad,
             'r2': r2,
             't_stat': t_stat,
-            'p_value': p_value
+            'p_value': p_value,
+            'conf_int_low': conf_int_low,
+            'conf_int_high': conf_int_high
         }
 
 df_resultados = pd.DataFrame(resultados).T
-# df_resultados.head()
-# print("Resultados para FAB 32:")
-# print(df_resultados.loc['FAB32'])
+df_resultados_top = df_resultados.loc[top_fabs]
+display(df_resultados_top)
+
+for FAB in top_fabs:
+    df_fab_data = df_modeling[df_modeling['FAB'] == FAB].copy()
+    if len(df_fab_data) > 1:
+        x = df_fab_data['ln_precio']
+        y = df_fab_data['ln_cantidad']
+        coef = np.polyfit(x, y, 1)
+        poly1d_fn = np.poly1d(coef)
+        plt.figure(figsize=(7,5))
+        plt.scatter(x, y, color='blue', label='Datos reales')
+        plt.plot(x, poly1d_fn(x), color='red', label='Regresión lineal')
+        plt.title(f'Regresión ln_cantidad vs ln_precio - {FAB} (Top fabricante)')
+        plt.xlabel('ln(Precio promedio)')
+        plt.ylabel('ln(Cantidad vendida)')
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.show()
+df_resultados = pd.DataFrame(resultados).T
+df_resultados.head()
 
 datos_grafico = df_fabricante_top.head(6)
 plt.figure(figsize=(12, 8))
